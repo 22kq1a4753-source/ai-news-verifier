@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Powered News Verifier</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7fafc;
+        }
+        .container {
+            max-width: 800px;
+        }
+        .real-result {
+            background-color: #d1fae5; /* Green 100 */
+            border-left: 6px solid #10b981; /* Green 500 */
+        }
+        .fake-result {
+            background-color: #fee2e2; /* Red 100 */
+            border-left: 6px solid #ef4444; /* Red 500 */
+        }
+        .pending-result {
+            background-color: #f3f4f6; /* Gray 100 */
+            border-left: 6px solid #9ca3af; /* Gray 400 */
+        }
+        .auth-card {
+            min-height: 250px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+    <div class="container mx-auto p-8 bg-white shadow-2xl rounded-xl">
+        <h1 class="text-4xl font-bold text-center text-gray-800 mb-2">
+            AI-Powered News Verifier
+        </h1>
+        <!-- AUTHENTICATION VIEW -->
+        <div id="authContainer" class="auth-card flex flex-col justify-center p-4">
+            <div class="mb-4 w-full">
+                <label for="apiKeyInput" class="block text-sm font-bold text-red-600 mb-1">
+                    Enter Your Gemini API Key
+                </label>
+                <input type="password" id="apiKeyInput"
+                    class="w-full p-3 border-2 border-red-400 rounded-lg focus:ring-4 focus:ring-red-500/50 transition duration-300"
+                    placeholder="Paste your Gemini API Key here (starts with 'AIza...')"
+                    oninput="handleAuthInput()">
+                <div id="authMessage" class="text-sm mt-2 font-semibold text-red-600 hidden">
+                    Please enter your API Key to proceed.
+                </div>
+            </div>
+
+            <!-- New Unlock Button -->
+            <button id="unlockButton" onclick="proceedToApp()" 
+                class="w-full mt-4 px-6 py-3 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 transition duration-300 transform hover:scale-[1.01] active:scale-100 focus:outline-none focus:ring-4 focus:ring-red-500/50 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                Unlock News Verifier
+            </button>
+
+            <p class="text-xs text-gray-500 mt-4 text-center">
+                If no key is entered, the app will run in **Demo Mode** with simulated results.
+            </p>
+        </div>
+
+
+        <!-- NEWS VERIFIER APP CONTENT -->
+        <div id="appContainer" class="hidden">
+            <!-- Input Area -->
+            <textarea id="newsInput" rows="6" 
+                class="w-full p-4 border-2 border-gray-300 rounded-lg focus:ring-4 focus:ring-blue-500 focus:border-blue-500 transition duration-300 resize-none"
+                placeholder="Paste the news article title or statement here for classification..."
+                oninput="handleNewsInput()"></textarea>
+
+            <!-- Analysis Button (Calls Gemini API) -->
+            <button id="analyzeButton" onclick="analyzeClaim()" disabled
+                class="w-full mt-4 px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 transition duration-300 transform hover:scale-[1.01] active:scale-100 focus:outline-none focus:ring-4 focus:ring-blue-500/50 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                <span id="buttonText">Analyze Result</span>
+            </button>
+            
+            <div id="loadingIndicator" class="mt-2 text-sm text-blue-600 text-center hidden">
+                <svg class="animate-spin h-4 w-4 mr-1 inline" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                Processing request...
+            </div>
+
+            <!-- Result Display -->
+            <div id="resultContainer" class="mt-8 p-6 rounded-lg shadow-inner pending-result transition duration-500">       
+                <p class="text-lg font-medium text-gray-700">Result:</p>
+                <div class="text-4xl font-extrabold mt-1 mb-2 text-gray-900" id="predictionResult">Awaiting Analysis...</div>
+                <p class="text-sm text-gray-600">Message: <span id="rationaleDisplay" class="font-bold">Enter text and click 'Analyze' to start.</span></p>
+            </div>
+        </div>
+    </div>
+
+    <div id="messageBox" class="fixed bottom-4 right-4 bg-red-600 text-white p-3 rounded-lg shadow-xl hidden transition-opacity duration-300"></div>
+
+    <script>
+        // DOM Elements
+        const newsInput = document.getElementById('newsInput');
+        const apiKeyInput = document.getElementById('apiKeyInput'); 
+        const authMessage = document.getElementById('authMessage');
+        const unlockButton = document.getElementById('unlockButton');
+        const authContainer = document.getElementById('authContainer');
+        const appContainer = document.getElementById('appContainer');
+        
+        const analyzeButton = document.getElementById('analyzeButton');
+        const buttonText = document.getElementById('buttonText');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const resultContainer = document.getElementById('resultContainer');
+        const predictionResult = document.getElementById('predictionResult');
+        const rationaleDisplay = document.getElementById('rationaleDisplay');
+        const inputSentenceDisplay = document.getElementById('inputSentenceDisplay');
+        const messageBox = document.getElementById('messageBox');
+
+        // Constants and State
+        const geminiApiBaseUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent";
+        let API_KEY = ""; // Stores the actual key if provided
+        let isDemoMode = false; // New flag for demo functionality
+
+        // --- Helper Functions ---
+
+        /** Shows a temporary message instead of alert() */
+        function showMessage(text, isError = true) {
+            messageBox.textContent = text;
+            messageBox.classList.remove('hidden', 'bg-red-600', 'bg-green-600', 'bg-yellow-600');
+            messageBox.classList.add(isError ? 'bg-red-600' : 'bg-green-600');
+            setTimeout(() => {
+                messageBox.classList.add('hidden');
+            }, 5000);
+        }
+        
+        /** Gets the API Key from the global variable */
+        function getApiUrl() {
+            if (!API_KEY) {
+                // Should only happen if code logic is flawed, as isDemoMode check should handle it
+                showMessage("Authentication required. Please enter your API Key.", true); 
+                return null;
+            }
+            return `${geminiApiBaseUrl}?key=${API_KEY}`;
+        }
+
+        /** Handles input on the API Key field to enable/disable the unlock button. 
+         * Note: button is now always enabled for Demo Mode.
+         */
+        function handleAuthInput() {
+             const currentKey = apiKeyInput.value.trim();
+             // The button is always enabled now, but we update the border color
+             if (currentKey) {
+                 apiKeyInput.classList.remove('border-red-400');
+                 apiKeyInput.classList.add('border-green-400');
+             } else {
+                 apiKeyInput.classList.remove('border-green-400');
+                 apiKeyInput.classList.add('border-red-400');
+             }
+        }
+
+        /** Handles input on the News text area to enable/disable analyze button. */
+        function handleNewsInput() {
+            const trimmedText = newsInput.value.trim();
+            analyzeButton.disabled = trimmedText === '';
+            inputSentenceDisplay.textContent = trimmedText || "-- Enter text and click Analyze --";
+        }
+
+        /** Updates UI elements based on current mode (Demo or Live) */
+        function updateUIMode() {
+            if (isDemoMode) {
+                predictionResult.textContent = "Awaiting Analysis (DEMO MODE)...";
+                rationaleDisplay.textContent = "Enter text to see a simulated classification result.";
+                // Change button style for visual feedback in demo mode
+                analyzeButton.classList.remove('bg-blue-600', 'hover:bg-blue-700', 'focus:ring-blue-500/50');
+                analyzeButton.classList.add('bg-gray-500', 'hover:bg-gray-600', 'focus:ring-gray-400/50');
+            } else {
+                predictionResult.textContent = "Awaiting Analysis...";
+                rationaleDisplay.textContent = "Enter text and click 'Analyze' to start.";
+                // Reset to original button style for live mode
+                analyzeButton.classList.add('bg-blue-600', 'hover:bg-blue-700', 'focus:ring-blue-500/50');
+                analyzeButton.classList.remove('bg-gray-500', 'hover:bg-gray-600', 'focus:ring-gray-400/50');
+            }
+        }
+
+        /** Switches from the Auth View to the App View after key entry. */
+        function proceedToApp() {
+            const key = apiKeyInput.value.trim();
+            
+            if (key) {
+                // Live Mode
+                API_KEY = key;
+                isDemoMode = false;
+                localStorage.setItem('geminiApiKey', key);
+                showMessage("API Key accepted! Welcome to the News Verifier (Live Mode).", false);
+            } else {
+                // Demo Mode
+                API_KEY = ""; // Ensure key is empty
+                isDemoMode = true;
+                localStorage.removeItem('geminiApiKey'); // Ensure no old key interferes
+                showMessage("No API Key entered. Running in DEMO MODE. Results are simulated.", true);
+            }
+
+            // Switch Views
+            authContainer.classList.add('hidden');
+            appContainer.classList.remove('hidden');
+
+            // Reset initial result state and update UI based on mode
+            resultContainer.classList.remove('real-result', 'fake-result');
+            resultContainer.classList.add('pending-result');
+            updateUIMode();
+
+            handleNewsInput(); // Initialize button state for news input
+        }
+
+
+        /**
+         * Helper function to handle API calls with exponential backoff and structured error throwing.
+         */
+        async function fetchWithBackoff(url, options, retries = 3) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) {
+                        const errorBody = await response.json().catch(() => ({}));
+                        throw { 
+                            status: response.status, 
+                            message: errorBody.error?.message || `HTTP error! status: ${response.status}`
+                        };
+                    }
+                    return response;
+                } catch (error) {
+                    // Check for specific unrecoverable error (e.g., 401 Unauthorized)
+                    if (error && error.status === 401) throw error; 
+                    // Throw if it's the last retry or if error has no status (network failure, etc.)
+                    if (i === retries - 1 || !error.status) throw error; 
+                    
+                    const delay = Math.pow(2, i) * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        // --- GEMINI AI CLASSIFICATION ---
+        async function analyzeClaim() {
+            const query = newsInput.value.trim();
+            if (!query) return;
+
+            // 1. Set Loading State
+            analyzeButton.disabled = true;
+            buttonText.textContent = isDemoMode ? "Simulating..." : "Analyzing...";
+            loadingIndicator.classList.remove('hidden');
+
+            resultContainer.classList.remove('real-result', 'fake-result');
+            resultContainer.classList.add('pending-result');
+            predictionResult.textContent = "Processing...";
+            rationaleDisplay.textContent = isDemoMode ? "Simulating analysis latency..." : "Waiting for model response...";
+
+            // --- DEMO MODE EXECUTION ---
+            if (isDemoMode) {
+                // Simulate API call delay
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Mock result logic
+                const isReal = Math.random() < 0.5;
+                const classification = isReal ? 'REAL' : 'FAKE';
+                const rationale = isReal 
+                    ? "The claim is well-sourced and uses neutral, verifiable language, suggesting it is real news (simulated in Demo Mode)."
+                    : "The headline contains sensational language and is phrased to elicit a strong emotional reaction, suggesting it is fake news (simulated in Demo Mode).";
+                
+                // 2. Update UI with result (Simulated)
+                if (classification === 'REAL') {
+                    resultContainer.classList.remove('pending-result', 'fake-result');
+                    resultContainer.classList.add('real-result');
+                    predictionResult.textContent = 'REAL NEWS (DEMO)';
+                } else {
+                    resultContainer.classList.remove('pending-result', 'real-result');
+                    resultContainer.classList.add('fake-result');
+                    predictionResult.textContent = 'FAKE NEWS (DEMO)';
+                }
+                rationaleDisplay.textContent = rationale;
+
+                // 3. Reset Loading State
+                handleNewsInput(); 
+                buttonText.textContent = "Analyze Result";
+                loadingIndicator.classList.add('hidden');
+                return; 
+            }
+
+            // --- LIVE MODE EXECUTION (Existing API logic) ---
+            const fullUrl = getApiUrl();
+            if (!fullUrl) return; // Should be handled by isDemoMode check, but safety first.
+
+            const userQuery = `Analyze the following news headline/claim and classify it as either REAL or FAKE based on common patterns of verifiable versus sensational language. Provide a brief, concise justification. Claim: "${query}"`;
+            
+            const systemPrompt = "You are a highly accurate News Authenticity Classifier. Your task is to analyze user-provided text and return a structured JSON object containing your definitive classification (REAL or FAKE) and a one-sentence rationale. DO NOT use markdown or any text outside the JSON object.";
+
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "classification": { 
+                                "type": "STRING", 
+                                "description": "The result, either 'REAL' or 'FAKE'." 
+                            },
+                            "rationale": { 
+                                "type": "STRING", 
+                                "description": "A concise, one-sentence justification for the classification." 
+                            }
+                        },
+                        "required": ["classification", "rationale"]
+                    }
+                }
+            };
+
+            try {
+                const response = await fetchWithBackoff(fullUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await response.json();
+                const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                
+                if (!jsonText) {
+                    throw new Error("API returned no content or an invalid structure.");
+                }
+
+                const parsedJson = JSON.parse(jsonText);
+                const classification = parsedJson.classification.toUpperCase();
+                const rationale = parsedJson.rationale;
+                
+                // 2. Update UI with result (Live)
+                if (classification === 'REAL') {
+                    resultContainer.classList.remove('pending-result', 'fake-result');
+                    resultContainer.classList.add('real-result');
+                    predictionResult.textContent = 'REAL NEWS';
+                } else if (classification === 'FAKE') {
+                    resultContainer.classList.remove('pending-result', 'real-result');
+                    resultContainer.classList.add('fake-result');
+                    predictionResult.textContent = 'FAKE NEWS';
+                } else {
+                    throw new Error("Model returned unexpected classification.");
+                }
+
+                rationaleDisplay.textContent = rationale;
+
+            } catch (error) {
+                console.error("Analysis Error:", error);
+                
+                const errorMessage = (error && error.status === 401) 
+                    ? `AUTHENTICATION ERROR (${error.status}): Your API Key failed. Please re-enter it.`
+                    : `ANALYSIS FAILED: ${error.message || "Unknown error occurred."}`;
+
+                predictionResult.textContent = errorMessage;
+                rationaleDisplay.textContent = "The connection to the AI service failed. Please check the console for status code errors.";
+                resultContainer.classList.remove('real-result', 'pending-result');
+                resultContainer.classList.add('fake-result'); 
+                showMessage(errorMessage, true);
+                
+                // If auth fails, prompt user to re-enter key
+                if (error && error.status === 401) {
+                    authContainer.classList.remove('hidden');
+                    appContainer.classList.add('hidden');
+                    API_KEY = "";
+                    isDemoMode = false; // Force back to non-demo mode if auth fails
+                    localStorage.removeItem('geminiApiKey');
+                }
+                
+            } finally {
+                // 3. Reset Loading State
+                handleNewsInput(); 
+                buttonText.textContent = "Analyze Result"; 
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+
+        // Initialize UI on load
+        window.onload = function() {
+            // Load API Key from localStorage for persistence in local environment
+            const savedKey = localStorage.getItem('geminiApiKey');
+            if (savedKey) {
+                apiKeyInput.value = savedKey;
+                // If a key is present, automatically proceed to the app view
+                proceedToApp(); 
+            } else {
+                // If no key, ensure the authentication view is visible, but the unlock button is ready for demo mode.
+                authContainer.classList.remove('hidden');
+                appContainer.classList.add('hidden');
+                handleAuthInput(); // Initialize button state
+            }
+        };
+    </script>
+</body>
+</html>
